@@ -113,8 +113,8 @@ def asynchronous_quant(input_file):
         shutil.copyfileobj(open(input_file['transcript_fasta'], 'rb'), merge_fasta)
         shutil.copyfileobj(open(input_file['TE_fasta'], 'rb'), merge_fasta)
     
-    #sys.stdout.write(Fore.CYAN + '[PROCESS]' + Style.RESET_ALL + ' kallisto index\n')
-    #os.system('kallisto index -i {}/kallisto/kallisto_index {} > {}/kallisto/index.out 2> {}/kallisto/index.err'.format(outdir, outdir + '/merge.fa', outdir, outdir))
+    sys.stdout.write(Fore.CYAN + '[PROCESS]' + Style.RESET_ALL + ' kallisto index\n')
+    os.system('kallisto index -i {}/kallisto/kallisto_index {} > {}/kallisto/index.out 2> {}/kallisto/index.err'.format(outdir, outdir + '/merge.fa', outdir, outdir))
 
     command_list = list()
     stdout_list = list()
