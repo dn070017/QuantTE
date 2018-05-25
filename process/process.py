@@ -1,10 +1,12 @@
 import json
 import os
 import re
+import shutil
 import sys
 import time
 
 from Bio.Seq import Seq
+from collections import defaultdict
 from colorama import Fore, Style  
 from subprocess import Popen
 
@@ -26,14 +28,16 @@ def process_and_validate_argument(args):
                     sys.stderr.write(Fore.RED + '[WARNING]' + Style.RESET_ALL + ' set output_dir to ./\n')
                     
                 if args.kallisto:
-                    required_file.extend(['TE_fasta', 'transcript_fasta', 'read_fastq'])
+                    required_file.extend(['TE_fasta', 'transcript_fasta',  'read_label', 'read_fastq'])
+                    os.makedirs(input_file['output_dir'] + '/kallisto', exist_ok=True)
                 if args.extract:
-                    if 'genome_pickle' in input_file:
-                        required_file.append('genome_pickle')
+                    if 'genome_seq_pickle' in input_file:
+                        required_file.append('genome_seq_pickle')
                     else:
                         required_file.append('genome_fasta')
-                    if 'repeat_masker_pickle' in input_file:
-                        required_file.append('repeat_masker_pickle')
+
+                    if 'repeat_list_pickle' in input_file:
+                        required_file.append('repeat_list_pickle')
                     elif 'repeat_masker_dir' in input_file:
                         required_file.append('repeat_masker_dir')
                     else:
@@ -45,24 +49,25 @@ def process_and_validate_argument(args):
                 
                 for required in required_file:
                     if required not in input_file:
-                        sys.stderr.write(Fore.RED + '[ERROR]' + Style.RESET_ALL + ' required')
-                        sys.stderr.write(Fore.RED + ' ' + required + Style.RESET_ALL + ' in input file\n')
+                        sys.stderr.write(Fore.RED + '[ERROR]' + Style.RESET_ALL + ' required ')
+                        sys.stderr.write(Fore.RED + required + Style.RESET_ALL + ' in input file\n')
                         terminate = True
 
                 for var in input_file.keys():
                     file = input_file[var]
                     if isinstance(file, list):
-                        if var == 'read_label':
+                        if var in ['read_fastq']:
                             for label in file:
-                                sys.stderr.write(Fore.RED + '[WARNING] ' + Style.RESET_ALL + 'create directory for read_label\n')
-                                os.makedirs(input_file['output_dir'] + '/' + label, exist_ok=True)
+                                 if not os.path.exists(label):
+                                    sys.stderr.write(Fore.RED + '[ERROR] ' + label + Style.RESET_ALL + ' does not exist\n') 
+                                    terminate = True
                         continue
-                    elif var == 'output_dir':
+                    elif var in ['output_dir']:
                         path = os.path.abspath(file)
                         if not os.path.exists(path):
                             sys.stderr.write(Fore.RED + '[WARNING] ' + Style.RESET_ALL + 'create directory for outdir\n')
                             os.makedirs(path, exist_ok=True)
-                            input_file[var] = os.path.abspath(file)
+                            input_file[var] = path
                     elif var not in ['TE_fasta']:
                         if os.path.exists(file):
                             input_file[var] = os.path.abspath(file)
@@ -101,40 +106,26 @@ def extract_repeat_seq(repeat_list, genome_seq, output_file):
 
     return
 
-def merge_xprs_result(xprs_list):
-    xprs_dict = defaultdict(dict)
-    with open(sys.argv[1], 'r') as xprs:
-        for i, xprs_line in enumerate(xprs):
-            if i == 0:
-                continue
-            xprs_data = xprs_line.split('\t')
-            target_name = xprs_data[0]
-            length = int(xprs_data[1])
-            count = float(xprs_data[3])
-            tpm = float(xprs_data[4])
-            regex = re.match('(\S+?):(\S+?):', target_name)
-            if regex:
-                target_name = regex.group(1) + ':' + regex.group(2)
-            try:
-                xprs_dict[target_name]['seq'] += 1
-                xprs_dict[target_name]['length'] += length
-                xprs_dict[target_name]['count'] += count
-                xprs_dict[target_name]['tpm'] += tpm
-            except:
-                xprs_dict[target_name]['seq'] = 1
-                xprs_dict[target_name]['length'] = length
-                xprs_dict[target_name]['count'] = count
-                xprs_dict[target_name]['tpm'] = tpm
+def asynchronous_quant(input_file):
 
-    for name in sorted(xprs_dict.keys()):
-        print(name, round(xprs_dict[name]['length']/xprs_dict[name]['seq'], 3),
-              round(xprs_dict[name]['count'], 3), round(xprs_dict[name]['tpm'], 3), sep='\t')
-    return
+    outdir = input_file['output_dir']
+    with open(outdir + '/merge.fa','wb') as merge_fasta:
+        shutil.copyfileobj(open(input_file['transcript_fasta'], 'rb'), merge_fasta)
+        shutil.copyfileobj(open(input_file['TE_fasta'], 'rb'), merge_fasta)
+    
+    #sys.stdout.write(Fore.CYAN + '[PROCESS]' + Style.RESET_ALL + ' kallisto index\n')
+    #os.system('kallisto index -i {}/kallisto/kallisto_index {} > {}/kallisto/index.out 2> {}/kallisto/index.err'.format(outdir, outdir + '/merge.fa', outdir, outdir))
 
-def asynchronous_quant():
-    command_list = ['kallisto quant -t 32 -o ./kallisto/A -i ./kallisto/kallisto_index --single -l 80 -s 15 ../../NGS1050418/A.fastq.gz',
-                    'kallisto quant -t 32 -o ./kallisto/B -i ./kallisto/kallisto_index --single -l 80 -s 15 ../../NGS1050418/B.fastq.gz']
-    queue = [Popen(command.split()) for command in command_list]
+    command_list = list()
+    stdout_list = list()
+    stderr_list = list()
+    sys.stdout.write(Fore.CYAN + '[PROCESS]' + Style.RESET_ALL + ' kallisto quantification\n')
+    for label, fastq in zip(input_file['read_label'], input_file['read_fastq']):
+        command_list.append('kallisto quant -t 32 -o {} -i {}/kallisto/kallisto_index --single -l 80 -s 15 {}'.format(outdir + '/kallisto/' + label, outdir, fastq))
+        stdout_list.append(open('{}/kallisto/quant_{}.out'.format(outdir, label), 'w'))
+        stderr_list.append(open('{}/kallisto/quant_{}.err'.format(outdir, label), 'w'))
+
+    queue = [Popen(command.split(), stdout=out, stderr=err) for command, out, err in zip(command_list, stdout_list, stderr_list)]
     
     while True:
         if len(queue) == 0:
@@ -143,9 +134,44 @@ def asynchronous_quant():
             retcode = process.poll()
             if retcode is not None:
                 queue.remove(process)
-            else: # No process is done, wait a bit and check again.
+            else: 
                 time.sleep(.1)
                 continue
+    
+    for out, err in zip(stdout_list, stderr_list):
+        out.close()
+        err.close()
+    return
 
-#os.system('kallisto index -i kallisto/kallisto_index ../merge.fa')
-#asynchronous_quant()
+def merge_xprs_result(input_file):
+    for label in input_file['read_label']:
+        xprs_dict = defaultdict(dict)
+        with open(input_file['output_dir'] + '/kallisto/' + label  + '/abundance.tsv', 'r') as xprs:
+            for i, xprs_line in enumerate(xprs):
+                if i == 0:
+                    continue
+                xprs_data = xprs_line.split('\t')
+                target_name = xprs_data[0]
+                length = int(xprs_data[1])
+                count = float(xprs_data[3])
+                tpm = float(xprs_data[4])
+                regex = re.match('(\S+?):(\S+?):', target_name)
+                if regex:
+                    target_name = regex.group(1) + ':' + regex.group(2)
+                try:
+                    xprs_dict[target_name]['seq'] += 1
+                    xprs_dict[target_name]['length'] += length
+                    xprs_dict[target_name]['count'] += count
+                    xprs_dict[target_name]['tpm'] += tpm
+                except:
+                    xprs_dict[target_name]['seq'] = 1
+                    xprs_dict[target_name]['length'] = length
+                    xprs_dict[target_name]['count'] = count
+                    xprs_dict[target_name]['tpm'] = tpm
+        
+        with open(input_file['output_dir'] + '/kallisto/' + label  + '/merge_abundance.tsv', 'w') as merge_xprs:
+            print('target_id', 'avg_length', 'est_counts', 'tpm', sep='\t', file=merge_xprs)
+            for name in sorted(xprs_dict.keys()):
+                print(name, round(xprs_dict[name]['length']/xprs_dict[name]['seq'], 3),
+                      round(xprs_dict[name]['count'], 3), round(xprs_dict[name]['tpm'], 3), sep='\t', file=merge_xprs)
+    return
