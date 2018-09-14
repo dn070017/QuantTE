@@ -58,9 +58,11 @@ def process_and_validate_argument(args):
                     if isinstance(file, list):
                         if var in ['read_fastq']:
                             for label in file:
-                                 if not os.path.exists(label):
-                                    sys.stderr.write(Fore.RED + '[ERROR] ' + label + Style.RESET_ALL + ' does not exist\n') 
-                                    terminate = True
+                                fastq_list = label.split(' ')
+                                for fastq in fastq_list:
+                                    if not os.path.exists(fastq):
+                                        sys.stderr.write(Fore.RED + '[ERROR] ' + fastq + Style.RESET_ALL + ' does not exist\n') 
+                                        terminate = True
                         continue
                     elif var in ['output_dir']:
                         path = os.path.abspath(file)
@@ -121,7 +123,11 @@ def asynchronous_quant(input_file):
     stderr_list = list()
     sys.stdout.write(Fore.CYAN + '[PROCESS]' + Style.RESET_ALL + ' kallisto quantification\n')
     for label, fastq in zip(input_file['read_label'], input_file['read_fastq']):
-        command_list.append('kallisto quant -t 32 -o {} -i {}/kallisto/kallisto_index --single -l 80 -s 15 {}'.format(outdir + '/kallisto/' + label, outdir, fastq))
+        fastq_list = fastq.split(" ")
+        if len(fastq_list) == 1:
+            command_list.append('kallisto quant -t 32 -o {} -i {}/kallisto/kallisto_index --single -l 80 -s 15 {}'.format(outdir + '/kallisto/' + label, outdir, fastq))
+        elif len(fastq_list) == 2:
+            command_list.append('kallisto quant -t 32 -o {} -i {}/kallisto/kallisto_index --rf-stranded {}'.format(outdir + '/kallisto/' + label, outdir, fastq))
         stdout_list.append(open('{}/kallisto/quant_{}.out'.format(outdir, label), 'w'))
         stderr_list.append(open('{}/kallisto/quant_{}.err'.format(outdir, label), 'w'))
 
